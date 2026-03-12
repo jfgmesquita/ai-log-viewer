@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copilot Session Log Viewer</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-secondary: #8b949e;
+  --accent: #58a6ff;
+  --accent-subtle: #1f6feb33;
+  --green: #3fb950;
+  --orange: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --radius: 8px;
+  --shadow: 0 3px 12px rgba(0,0,0,0.4);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 0;
+  margin-bottom: 32px;
+}
+header .container { display: flex; align-items: center; gap: 16px; }
+.logo {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: bold; color: #fff;
+}
+header h1 { font-size: 22px; font-weight: 600; }
+header p { color: var(--text-secondary); font-size: 14px; }
+.dir-badge {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+.sessions-grid { display: flex; flex-direction: column; gap: 12px; }
+.session-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  display: block;
+}
+.session-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow);
+}
+.session-card h2 {
+  font-size: 18px; font-weight: 600; margin-bottom: 8px;
+  color: var(--accent);
+}
+.session-meta {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  font-size: 13px; color: var(--text-secondary);
+}
+.session-meta span { display: flex; align-items: center; gap: 4px; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge-repo { background: var(--accent-subtle); color: var(--accent); }
+.badge-branch { background: #3fb95022; color: var(--green); }
+.empty-state {
+  text-align: center; padding: 80px 20px;
+  color: var(--text-secondary);
+}
+.empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <div class="logo">C</div>
+    <div>
+      <h1>Copilot Session Log Viewer</h1>
+      <p>Browse and understand GitHub Copilot agent session logs</p>
+    </div>
+    <span class="dir-badge">{{ log_dir }}</span>
+  </div>
+</header>
+<div class="container">
+  {% if sessions %}
+  <div class="sessions-grid">
+    {% for s in sessions %}
+    <a class="session-card" href="/session/{{ s.id }}">
+      <h2>{{ s.summary or s.id }}</h2>
+      <div class="session-meta">
+        {% if s.repository %}
+        <span class="badge badge-repo">{{ s.repository }}</span>
+        {% endif %}
+        {% if s.branch %}
+        <span class="badge badge-branch">{{ s.branch }}</span>
+        {% endif %}
+        {% if s.created_at %}
+        <span>{{ s.created_at[:19].replace('T', ' ') }} UTC</span>
+        {% endif %}
+        {% if s.cwd %}
+        <span style="font-family:monospace;font-size:12px;">{{ s.cwd }}</span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h2>No sessions found</h2>
+    <p>Point the viewer at a directory containing Copilot session log folders.</p>
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>

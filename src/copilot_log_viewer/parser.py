@@ -1,0 +1,286 @@
+"""Parsing logic for Copilot session log directories."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import yaml
+
+
+def parse_workspace(session_dir: Path) -> dict:
+    """Read workspace.yaml metadata for a session."""
+    ws_file = session_dir / "workspace.yaml"
+    if not ws_file.exists():
+        return {}
+    with open(ws_file) as f:
+        return yaml.safe_load(f) or {}
+
+
+def parse_events(session_dir: Path) -> list[dict]:
+    """Read the events.jsonl file and return a list of parsed event dicts."""
+    ev_file = session_dir / "events.jsonl"
+    if not ev_file.exists():
+        return []
+    events: list[dict] = []
+    with open(ev_file) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    return events
+
+
+def parse_snapshots(session_dir: Path) -> dict:
+    """Read the rewind-snapshots/index.json file."""
+    idx = session_dir / "rewind-snapshots" / "index.json"
+    if not idx.exists():
+        return {}
+    with open(idx) as f:
+        return json.loads(f.read())
+
+
+# ---------------------------------------------------------------------------
+# Timestamp helpers
+# ---------------------------------------------------------------------------
+
+def ts_display(iso_str) -> str:
+    """Format an ISO timestamp (or datetime) for display."""
+    if not iso_str:
+        return ""
+    if isinstance(iso_str, datetime):
+        return iso_str.strftime("%Y-%m-%d %H:%M:%S UTC")
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except Exception:
+        return str(iso_str)
+
+
+def ts_relative(iso_str: str) -> str:
+    """Return a human-friendly relative time string."""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delta = now - dt
+        secs = int(delta.total_seconds())
+        if secs < 60:
+            return "just now"
+        if secs < 3600:
+            return f"{secs // 60}m ago"
+        if secs < 86400:
+            return f"{secs // 3600}h ago"
+        return f"{secs // 86400}d ago"
+    except Exception:
+        return ""
+
+
+def duration_between(start_iso, end_iso) -> str:
+    """Human-readable duration between two ISO timestamps."""
+    try:
+        s = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+        e = datetime.fromisoformat(str(end_iso).replace("Z", "+00:00"))
+        secs = int((e - s).total_seconds())
+        if secs < 0:
+            return ""
+        if secs < 60:
+            return f"{secs}s"
+        m, s2 = divmod(secs, 60)
+        if m < 60:
+            return f"{m}m {s2}s"
+        h, m2 = divmod(m, 60)
+        return f"{h}h {m2}m"
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Session discovery
+# ---------------------------------------------------------------------------
+
+def discover_sessions(base: Path) -> list[dict]:
+    """Scan *base* for subdirectories that look like Copilot session logs."""
+    sessions: list[dict] = []
+    if not base.is_dir():
+        return sessions
+    for d in sorted(base.iterdir()):
+        if d.is_dir() and (d / "events.jsonl").exists():
+            ws = parse_workspace(d)
+            sessions.append({
+                "id": d.name,
+                "path": str(d),
+                "summary": ws.get("summary", d.name),
+                "repository": ws.get("repository", ""),
+                "branch": ws.get("branch", ""),
+                "cwd": ws.get("cwd", ""),
+                "created_at": str(ws.get("created_at", "")),
+                "updated_at": str(ws.get("updated_at", "")),
+            })
+    sessions.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+    return sessions
+
+
+# ---------------------------------------------------------------------------
+# Conversation builder
+# ---------------------------------------------------------------------------
+
+MAX_RESULT_CHARS = 10_000
+
+
+def build_conversation(events: list[dict]) -> list[dict]:
+    """Build a linear conversation view from raw JSONL events."""
+    conversation: list[dict] = []
+
+    for evt in events:
+        etype = evt.get("type", "")
+        data = evt.get("data", {})
+        ts = evt.get("timestamp", "")
+
+        if etype == "session.start":
+            ctx = data.get("context", {})
+            conversation.append({
+                "kind": "session_start",
+                "timestamp": ts,
+                "version": data.get("copilotVersion", ""),
+                "repo": ctx.get("repository", ""),
+                "branch": ctx.get("branch", ""),
+                "cwd": ctx.get("cwd", ""),
+            })
+
+        elif etype == "user.message":
+            att_list = []
+            for a in data.get("attachments", []):
+                att_list.append({
+                    "type": a.get("type", ""),
+                    "path": a.get("path", a.get("displayName", "")),
+                    "name": a.get("displayName", a.get("path", "")),
+                })
+            conversation.append({
+                "kind": "user_message",
+                "timestamp": ts,
+                "content": data.get("content", ""),
+                "attachments": att_list,
+            })
+
+        elif etype == "assistant.message":
+            tr_info = [
+                {"toolCallId": tr.get("toolCallId", ""), "toolName": tr.get("toolName", "unknown")}
+                for tr in data.get("toolRequests", [])
+            ]
+            conversation.append({
+                "kind": "assistant_message",
+                "timestamp": ts,
+                "content": data.get("content", ""),
+                "reasoning": data.get("reasoningText", ""),
+                "tool_requests": tr_info,
+                "parent_tool_call_id": data.get("parentToolCallId"),
+                "output_tokens": data.get("outputTokens", 0),
+            })
+
+        elif etype == "tool.execution_start":
+            conversation.append({
+                "kind": "tool_start",
+                "timestamp": ts,
+                "tool_call_id": data.get("toolCallId", ""),
+                "tool_name": data.get("toolName", "unknown"),
+                "arguments": data.get("arguments", {}),
+            })
+
+        elif etype == "tool.execution_complete":
+            result = data.get("result", "")
+            if isinstance(result, str):
+                result = result[:MAX_RESULT_CHARS]
+            else:
+                result = str(result)[:MAX_RESULT_CHARS]
+            conversation.append({
+                "kind": "tool_complete",
+                "timestamp": ts,
+                "tool_call_id": data.get("toolCallId", ""),
+                "success": data.get("success", False),
+                "result": result,
+            })
+
+        elif etype == "subagent.started":
+            conversation.append({
+                "kind": "subagent_start",
+                "timestamp": ts,
+                "agent_name": data.get("agentDisplayName", data.get("agentName", "")),
+                "tool_call_id": data.get("toolCallId", ""),
+            })
+
+        elif etype == "subagent.completed":
+            conversation.append({
+                "kind": "subagent_complete",
+                "timestamp": ts,
+                "agent_name": data.get("agentDisplayName", data.get("agentName", "")),
+                "tool_call_id": data.get("toolCallId", ""),
+            })
+
+        elif etype == "session.error":
+            conversation.append({
+                "kind": "error",
+                "timestamp": ts,
+                "message": str(data.get("message", data.get("error", str(data)))),
+            })
+
+        elif etype == "system.notification":
+            conversation.append({
+                "kind": "notification",
+                "timestamp": ts,
+                "message": data.get("message", str(data)),
+            })
+
+        elif etype == "session.shutdown":
+            conversation.append({"kind": "session_end", "timestamp": ts})
+
+        elif etype == "assistant.turn_start":
+            conversation.append({"kind": "turn_start", "timestamp": ts, "turn_id": data.get("turnId", "")})
+
+        elif etype == "assistant.turn_end":
+            conversation.append({"kind": "turn_end", "timestamp": ts, "turn_id": data.get("turnId", "")})
+
+    return conversation
+
+
+# ---------------------------------------------------------------------------
+# Statistics
+# ---------------------------------------------------------------------------
+
+def compute_stats(events: list[dict]) -> dict:
+    """Compute aggregate statistics from a list of raw events."""
+    stats: dict = {
+        "total_events": len(events),
+        "user_messages": 0,
+        "assistant_messages": 0,
+        "tool_calls": {},
+        "subagents": 0,
+        "errors": 0,
+        "total_output_tokens": 0,
+        "turns": 0,
+    }
+    for evt in events:
+        t = evt.get("type", "")
+        d = evt.get("data", {})
+        if t == "user.message":
+            stats["user_messages"] += 1
+        elif t == "assistant.message":
+            stats["assistant_messages"] += 1
+            stats["total_output_tokens"] += d.get("outputTokens", 0)
+        elif t == "tool.execution_start":
+            tn = d.get("toolName", "unknown")
+            stats["tool_calls"][tn] = stats["tool_calls"].get(tn, 0) + 1
+        elif t == "subagent.started":
+            stats["subagents"] += 1
+        elif t == "session.error":
+            stats["errors"] += 1
+        elif t == "assistant.turn_end":
+            stats["turns"] += 1
+
+    stats["total_tool_calls"] = sum(stats["tool_calls"].values())
+    return stats
