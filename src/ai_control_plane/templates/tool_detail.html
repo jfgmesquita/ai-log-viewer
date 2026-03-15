@@ -1,0 +1,588 @@
+{% extends "base.html" %}
+{% set active_page = "tools" %}
+
+{% block title %}{{ tool|capitalize }} Configuration - AI Control Plane{% endblock %}
+
+{% block head_extra %}
+<style>
+/* Tool nav (inside sidebar) */
+.tool-nav {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 16px;
+}
+.tab-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; text-decoration: none; color: var(--text-secondary);
+  font-size: 13px; font-weight: 500;
+  border-radius: var(--radius);
+  border-left: 3px solid transparent;
+  transition: all var(--transition);
+}
+.tab-link:hover { color: var(--text); text-decoration: none; background: var(--bg-tertiary); }
+.tab-link.active-claude { border-left-color: var(--purple); color: var(--purple); background: color-mix(in srgb, var(--purple) 8%, transparent); }
+.tab-link.active-copilot { border-left-color: var(--orange); color: var(--orange); background: color-mix(in srgb, var(--orange) 8%, transparent); }
+.tab-link.active-vscode { border-left-color: var(--green); color: var(--green); background: color-mix(in srgb, var(--green) 8%, transparent); }
+.tab-link svg { flex-shrink: 0; }
+
+/* Layout */
+.detail-layout { display: grid; grid-template-columns: 260px 1fr; gap: 24px; }
+@media (max-width: 768px) { .detail-layout { grid-template-columns: 1fr; } }
+
+.sidebar {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; align-self: start;
+}
+.sidebar h3 { font-size: 15px; margin-bottom: 12px; }
+.info-row {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.info-row:last-child { border-bottom: none; }
+.info-label { color: var(--text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+.info-value { font-weight: 500; overflow-wrap: break-word; word-break: normal; line-height: 1.4; }
+
+.main-content { min-width: 0; }
+
+/* Sections */
+.section {
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+}
+.section h3 {
+  font-size: 15px; font-weight: 600; margin-bottom: 12px;
+  cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 8px;
+}
+.section h3 .chevron {
+  width: 18px; height: 18px; flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+  transform: rotate(90deg);
+}
+.section.collapsed h3 .chevron { transform: rotate(0deg); }
+.section.collapsed .section-body { display: none; }
+
+.kv-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.kv-grid.kv-grid-compact { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.kv-item {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 13px;
+  gap: 12px;
+}
+.kv-key { color: var(--text-secondary); min-width: 0; flex-shrink: 1; overflow-wrap: break-word; word-break: normal; }
+.kv-value { font-weight: 500; overflow-wrap: break-word; word-break: normal; text-align: right; flex-shrink: 0; max-width: 60%; }
+
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.plugin-card {
+  background: var(--bg-tertiary); border-radius: var(--radius); padding: 14px;
+  transition: box-shadow var(--transition);
+}
+.plugin-card:hover { box-shadow: var(--shadow); }
+.plugin-card h4 { font-size: 14px; margin-bottom: 4px; }
+.plugin-card p { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+
+.cmd-list {
+  max-height: 300px; overflow-y: auto; overflow-x: auto; font-family: var(--font-mono);
+  font-size: 12px; line-height: 2; overflow-wrap: break-word; word-break: normal;
+}
+.cmd-list div { padding: 2px 8px; border-bottom: 1px solid var(--border); }
+.cmd-list div:hover { background: var(--bg-tertiary); }
+
+/* GrowthBook info box */
+.growthbook-info {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; margin-bottom: 12px;
+  background: var(--bg-tertiary); border-radius: var(--radius);
+  font-size: 12px; color: var(--text-secondary); line-height: 1.6;
+}
+.growthbook-info svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
+.growthbook-info code { background: var(--bg-secondary); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+/* Color helpers */
+.color-claude { color: var(--purple); }
+.color-copilot { color: var(--orange); }
+.color-vscode { color: var(--green); }
+
+/* Plugin/agent links */
+.plugin-link { color: var(--accent); text-decoration: none; }
+.plugin-link:hover { text-decoration: underline; }
+.ext-icon { font-size: 10px; opacity: 0.5; }
+
+/* Clauditor CTA */
+.clauditor-cta {
+  display: flex; align-items: center; gap: 14px;
+  margin-top: 16px; padding: 14px 18px;
+  background: linear-gradient(135deg, var(--purple-subtle), var(--accent-subtle));
+  border: 1px solid var(--purple); border-radius: var(--radius);
+  text-decoration: none; color: var(--text);
+  transition: all var(--transition);
+}
+.clauditor-cta:hover {
+  box-shadow: 0 0 16px color-mix(in srgb, var(--purple) 30%, transparent);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+.clauditor-cta strong { display: block; font-size: 14px; margin-bottom: 2px; }
+.clauditor-sub { font-size: 12px; color: var(--text-secondary); }
+.clauditor-icon {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.clauditor-arrow { margin-left: auto; font-size: 20px; color: var(--purple); flex-shrink: 0; transition: transform var(--transition); }
+.clauditor-cta:hover .clauditor-arrow { transform: translateX(4px); }
+
+/* Settings parsed view */
+.settings-desc { font-size: 12px; color: var(--text-secondary); max-width: 300px; }
+.settings-complex { font-size: 11px; white-space: pre-wrap; word-break: break-all; display: block; max-height: 120px; overflow-y: auto; }
+.btn-show-raw {
+  margin-top: 12px; padding: 5px 14px; font-size: 12px;
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 16px; color: var(--text-secondary); cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-show-raw:hover { border-color: var(--accent); color: var(--accent); }
+.hidden { display: none; }
+</style>
+{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb-bar">
+  <div class="container">
+    <a href="/tools">Tools</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>{% if tool == 'claude' %}Claude Code{% elif tool == 'copilot' %}GitHub Copilot{% else %}VS Code Chat{% endif %}</span>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="detail-layout">
+    <div class="sidebar">
+      <div class="tool-nav">
+        <a class="tab-link {% if tool == 'claude' %}active-claude{% endif %}" href="/tools/claude">{{ icon_claude(16) }} Claude Code</a>
+        <a class="tab-link {% if tool == 'copilot' %}active-copilot{% endif %}" href="/tools/copilot">{{ icon_copilot(16) }} GitHub Copilot</a>
+        <a class="tab-link {% if tool == 'vscode' %}active-vscode{% endif %}" href="/tools/vscode">{{ icon_vscode(16) }} VS Code Chat</a>
+      </div>
+      <h3>Quick Info</h3>
+      <div class="info-row">
+        <span class="info-label">Status</span>
+        <span class="info-value">{{ "Installed" if config.installed else "Not found" }}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Directory</span>
+        <span class="info-value" style="font-family:var(--font-mono);font-size:11px;">{{ config.get('home_dir') or config.get('user_dir', '') }}</span>
+      </div>
+      {% if tool == 'claude' %}
+      <div class="info-row"><span class="info-label">MCP Servers</span><span class="info-value">{{ config.mcp_servers|length }}</span></div>
+      <div class="info-row"><span class="info-label">Plugins</span><span class="info-value">{{ config.plugins|length + config.external_plugins|length }}</span></div>
+      <div class="info-row"><span class="info-label">Agents</span><span class="info-value">{{ config.agents|length }}</span></div>
+      <div class="info-row"><span class="info-label">Skills</span><span class="info-value">{{ config.skills|length }}</span></div>
+      <div class="info-row"><span class="info-label">Commands</span><span class="info-value">{{ config.commands|length }}</span></div>
+      <div class="info-row"><span class="info-label">Hooks</span><span class="info-value">{{ config.hooks|length }}</span></div>
+      <div class="info-row"><span class="info-label">Feature Flags</span><span class="info-value">{{ config.feature_flags|length + config.growthbook_flags|length }}</span></div>
+      {% elif tool == 'copilot' %}
+      <div class="info-row"><span class="info-label">MCP Servers</span><span class="info-value">{{ config.mcp_servers|length }}</span></div>
+      <div class="info-row"><span class="info-label">Skills</span><span class="info-value">{{ config.skills|length }}</span></div>
+      <div class="info-row"><span class="info-label">Sessions</span><span class="info-value">{{ config.session_count }}</span></div>
+      <div class="info-row"><span class="info-label">Commands</span><span class="info-value">{{ config.recent_commands|length }}</span></div>
+      {% else %}
+      <div class="info-row"><span class="info-label">MCP Servers</span><span class="info-value">{{ config.mcp_servers|length }}</span></div>
+      <div class="info-row"><span class="info-label">Agents</span><span class="info-value">{{ config.agents|length }}</span></div>
+      <div class="info-row"><span class="info-label">Skills</span><span class="info-value">{{ config.skills|length }}</span></div>
+      <div class="info-row"><span class="info-label">AI Settings</span><span class="info-value">{{ config.copilot_settings|length }}</span></div>
+      {% endif %}
+    </div>
+
+    <div class="main-content">
+
+      {# ---- MCP Servers (all tools) ---- #}
+      {% if config.mcp_servers %}
+      <div class="section">
+        <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}MCP Servers ({{ config.mcp_servers|length }})</h3>
+        <div class="section-body">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Command / URL</th></tr></thead>
+            <tbody>
+              {% for srv in config.mcp_servers %}
+              <tr>
+                <td><strong>{{ srv.name }}</strong></td>
+                <td><span class="badge badge-{{ srv.type }}">{{ srv.type }}</span></td>
+                <td><code>{% if srv.url %}{{ srv.url }}{% else %}{{ srv.command }}{% if srv.args %} {{ srv.args|join(' ') }}{% endif %}{% endif %}</code></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ---- Skills (all tools) ---- #}
+      {% if config.skills %}
+      <div class="section">
+        <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Skills ({{ config.skills|length }})</h3>
+        <div class="section-body">
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Description</th><th></th></tr></thead>
+            <tbody>
+              {% for s in config.skills %}
+              <tr>
+                <td><strong>{{ s.name }}</strong></td>
+                <td>{{ s.description[:150] }}</td>
+                <td>{% if s.homepage %}<a href="{{ s.homepage }}" target="_blank" rel="noopener" style="font-size:12px; white-space:nowrap;">Homepage &#x2197;</a>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {# ---- Claude-specific sections ---- #}
+      {% if tool == 'claude' %}
+
+        {# Plugins #}
+        {% if config.plugins or config.external_plugins %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Plugins ({{ config.plugins|length + config.external_plugins|length }})</h3>
+          <div class="section-body">
+            <div class="card-grid">
+              {% for p in config.plugins + config.external_plugins %}
+              <div class="plugin-card">
+                <h4>{% if p.type == 'official' %}<a href="https://github.com/anthropics/claude-code/tree/main/plugins/{{ p.name }}" target="_blank" rel="noopener" class="plugin-link">{{ p.name }} <span class="ext-icon">&#x2197;</span></a>{% else %}{{ p.name }}{% endif %}</h4>
+                <p>{{ p.description[:120] if p.description else 'No description' }}</p>
+                <div>
+                  <span class="badge {% if p.type == 'official' %}badge-official{% else %}badge-external{% endif %}">{{ p.type }}</span>
+                  {% if p.has_hooks %}<span class="badge badge-off">hooks</span>{% endif %}
+                  {% if p.has_agents %}<span class="badge badge-off">agents</span>{% endif %}
+                  {% if p.has_commands %}<span class="badge badge-off">commands</span>{% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Agents #}
+        {% if config.agents %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Agents ({{ config.agents|length }})</h3>
+          <div class="section-body">
+            <table class="data-table">
+              <thead><tr><th>Name</th><th>Plugin</th><th>Model</th><th>Description</th></tr></thead>
+              <tbody>
+                {% for a in config.agents %}
+                <tr>
+                  <td><strong><a href="https://github.com/anthropics/claude-code/tree/main/plugins/{{ a.plugin }}/agents" target="_blank" rel="noopener" class="plugin-link">{{ a.name }} <span class="ext-icon">&#x2197;</span></a></strong></td>
+                  <td>{{ a.plugin }}</td>
+                  <td>{% if a.model %}<span class="badge badge-stdio">{{ a.model }}</span>{% endif %}</td>
+                  <td>{{ a.description[:120] }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Slash Commands (Skills) #}
+        {% if config.commands %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Slash Commands ({{ config.commands|length }})</h3>
+          <div class="section-body">
+            <table class="data-table">
+              <thead><tr><th>Command</th><th>Plugin</th><th>Description</th></tr></thead>
+              <tbody>
+                {% for c in config.commands %}
+                <tr>
+                  <td><code>/{{ c.name }}</code></td>
+                  <td>{{ c.plugin }}</td>
+                  <td>{{ c.description[:120] }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Hooks #}
+        {% if config.hooks %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Hooks ({{ config.hooks|length }})</h3>
+          <div class="section-body">
+            <table class="data-table">
+              <thead><tr><th>Event</th><th>Name</th><th>Plugin</th><th>Command</th></tr></thead>
+              <tbody>
+                {% for h in config.hooks %}
+                <tr>
+                  <td>{{ h.event }}</td>
+                  <td><strong>{{ h.name }}</strong></td>
+                  <td>{{ h.plugin }}</td>
+                  <td><code>{{ h.command }}</code></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Feature Flags (user-visible) #}
+        {% if config.feature_flags %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Feature Flags ({{ config.feature_flags|length }})</h3>
+          <div class="section-body">
+            <div class="kv-grid kv-grid-compact">
+              {% for flag, enabled in config.feature_flags.items()|sort %}
+              <div class="kv-item">
+                <span class="kv-key">{{ flag }}</span>
+                <span class="badge {% if enabled %}badge-on{% else %}badge-off{% endif %}">{{ "on" if enabled else "off" }}</span>
+              </div>
+              {% endfor %}
+            </div>
+            <a href="https://gabrielsoltz.github.io/clauditor/" target="_blank" rel="noopener" class="clauditor-cta">
+              <span class="clauditor-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </span>
+              <span>
+                <strong>Not sure which flags to enable?</strong>
+                <span class="clauditor-sub">Clauditor is a security reference for Claude Code -- browse 50+ checks covering permissions, sandboxing, MCP supply chain, and more.</span>
+              </span>
+              <span class="clauditor-arrow">&rarr;</span>
+            </a>
+          </div>
+        </div>
+        {% endif %}
+
+        {# GrowthBook Feature Flags (server-side, hidden by default) #}
+        {% if config.growthbook_flags %}
+        <div class="section collapsed" id="growthbook-section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}GrowthBook Flags ({{ config.growthbook_flags|length }})</h3>
+          <div class="section-body">
+            <div class="growthbook-info">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span>These are <strong>server-side feature flags</strong> managed by Anthropic via <a href="https://www.growthbook.io/" target="_blank" rel="noopener" class="plugin-link">GrowthBook</a> (an open-source feature flagging platform). Claude Code caches them locally in <code>~/.claude.json</code> under <code>cachedGrowthBookFeatures</code>. They control A/B tests and gradual feature rollouts &mdash; the <code>tengu_</code> prefix is Claude Code's internal codename. These flags are read-only and managed by Anthropic.</span>
+            </div>
+            <div class="kv-grid kv-grid-compact">
+              {% for flag, enabled in config.growthbook_flags.items()|sort %}
+              <div class="kv-item">
+                <span class="kv-key">{{ flag }}</span>
+                <span class="badge {% if enabled %}badge-on{% else %}badge-off{% endif %}">{{ "on" if enabled else "off" }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Main Settings #}
+        {% if config.main_settings %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Main Settings</h3>
+          <div class="section-body">
+            <div class="kv-grid">
+              {% for k, v in config.main_settings.items()|sort %}
+              <div class="kv-item">
+                <span class="kv-key">{{ k }}</span>
+                <span class="kv-value">{{ v }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Settings #}
+        {% if config.settings %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Settings ({{ config.settings|length }})</h3>
+          <div class="section-body">
+            {% if parsed_settings %}
+            <div class="settings-parsed" id="settings-parsed">
+              <table class="data-table">
+                <thead><tr><th>Setting</th><th>Value</th><th>Description</th></tr></thead>
+                <tbody>
+                  {% for s in parsed_settings %}
+                  <tr>
+                    <td><code>{{ s.key }}</code></td>
+                    <td>
+                      {% if s.value is mapping or s.value is iterable and s.value is not string %}
+                        <code class="settings-complex">{{ json.dumps(s.value, indent=2) }}</code>
+                      {% elif s.value is sameas true %}
+                        <span class="badge badge-on">on</span>
+                      {% elif s.value is sameas false %}
+                        <span class="badge badge-off">off</span>
+                      {% else %}
+                        <span class="kv-value">{{ s.value }}</span>
+                      {% endif %}
+                    </td>
+                    <td class="settings-desc">{{ s.desc if s.desc else '—' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% endif %}
+            <div class="settings-raw {% if parsed_settings %}hidden{% endif %}" id="settings-raw">
+              <pre style="font-size:12px;overflow-x:auto;"><code>{{ json.dumps(config.settings, indent=2) }}</code></pre>
+            </div>
+            {% if parsed_settings %}
+            <button class="btn-show-raw" onclick="toggleSettingsView()" id="btn-settings-toggle">Show Raw JSON</button>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# Policy Limits #}
+        {% if config.policy_limits %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Policy &amp; Limits</h3>
+          <div class="section-body">
+            <div class="kv-grid">
+              {% for k, v in config.policy_limits.items()|sort %}
+              <div class="kv-item">
+                <span class="kv-key">{{ k }}</span>
+                <span class="kv-value">{{ v }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Plugin Blocklist #}
+        {% if config.plugin_blocklist %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Plugin Blocklist ({{ config.plugin_blocklist|length }})</h3>
+          <div class="section-body">
+            <div class="kv-grid">
+              {% for item in config.plugin_blocklist %}
+              <div class="kv-item"><span class="kv-key">{{ item }}</span></div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+      {% endif %}
+
+      {# ---- Copilot-specific sections ---- #}
+      {% if tool == 'copilot' %}
+
+        {# Config #}
+        {% if config.config %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Configuration</h3>
+          <div class="section-body">
+            <pre style="font-size:12px;overflow-x:auto;"><code>{{ json.dumps(config.config, indent=2) }}</code></pre>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Recent Commands #}
+        {% if config.recent_commands %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Recent Commands ({{ config.recent_commands|length }})</h3>
+          <div class="section-body">
+            <div class="cmd-list">
+              {% for cmd in config.recent_commands|reverse %}
+              <div>{{ cmd if cmd is string else json.dumps(cmd) }}</div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+      {% endif %}
+
+      {# ---- VS Code-specific sections ---- #}
+      {% if tool == 'vscode' %}
+
+        {# Agents #}
+        {% if config.agents %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Agents ({{ config.agents|length }})</h3>
+          <div class="section-body">
+            <table class="data-table">
+              <thead><tr><th>Name</th><th>Description</th></tr></thead>
+              <tbody>
+                {% for a in config.agents %}
+                <tr>
+                  <td><strong>{{ a.name }}</strong></td>
+                  <td>{{ a.description[:150] }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Copilot/AI Settings #}
+        {% if config.copilot_settings %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}AI Settings ({{ config.copilot_settings|length }})</h3>
+          <div class="section-body">
+            <table class="data-table">
+              <thead><tr><th>Key</th><th>Value</th></tr></thead>
+              <tbody>
+                {% for k, v in config.copilot_settings.items()|sort %}
+                <tr>
+                  <td><code>{{ k }}</code></td>
+                  <td>{% if v is mapping or v is iterable and v is not string %}<code>{{ json.dumps(v) }}</code>{% else %}{{ v }}{% endif %}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Language Models #}
+        {% if config.language_models %}
+        <div class="section">
+          <h3 onclick="this.parentElement.classList.toggle('collapsed')">{{ chevron() }}Language Models ({{ config.language_models|length }})</h3>
+          <div class="section-body">
+            <pre style="font-size:12px;overflow-x:auto;"><code>{{ json.dumps(config.language_models, indent=2) }}</code></pre>
+          </div>
+        </div>
+        {% endif %}
+
+      {% endif %}
+
+      {# Empty state #}
+      {% if not config.installed %}
+      <div class="section">
+        <p class="empty-note">This tool was not found on the system. Check that the directory exists and contains configuration files.</p>
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+function toggleSettingsView() {
+  var parsed = document.getElementById('settings-parsed');
+  var raw = document.getElementById('settings-raw');
+  var btn = document.getElementById('btn-settings-toggle');
+  if (!parsed || !raw || !btn) return;
+  var showingRaw = !raw.classList.contains('hidden');
+  if (showingRaw) {
+    parsed.classList.remove('hidden');
+    raw.classList.add('hidden');
+    btn.textContent = 'Show Raw JSON';
+  } else {
+    parsed.classList.add('hidden');
+    raw.classList.remove('hidden');
+    btn.textContent = 'Show Parsed View';
+  }
+}
+</script>
+{% endblock %}

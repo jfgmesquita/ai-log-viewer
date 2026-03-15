@@ -1,0 +1,453 @@
+{% extends "base.html" %}
+{% set active_page = "dashboard" %}
+
+{% block title %}Dashboard - AI Control Plane{% endblock %}
+
+{% block head_extra %}
+<style>
+/* ── Dashboard Hero ─────────────────────────────────────────────────── */
+.dashboard-header {
+  margin-bottom: 32px;
+}
+.dashboard-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 2px;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.dashboard-header p {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* ── Metric Cards (hero row) ────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 32px;
+}
+a.metric-card { text-decoration: none; color: inherit; }
+a.metric-card:hover { text-decoration: none; }
+.metric-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+.metric-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  opacity: 0.05;
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+.metric-card.purple::before { background: linear-gradient(135deg, var(--purple), transparent 60%); }
+.metric-card.orange::before { background: linear-gradient(135deg, var(--orange), transparent 60%); }
+.metric-card.green::before { background: linear-gradient(135deg, var(--green), transparent 60%); }
+.metric-card.blue::before { background: linear-gradient(135deg, var(--accent), transparent 60%); }
+.metric-icon {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+.metric-card.blue .metric-icon { color: var(--accent); opacity: 0.7; }
+.metric-card.purple .metric-icon { color: var(--purple); opacity: 0.7; }
+.metric-card.green .metric-icon { color: var(--green); opacity: 0.7; }
+.metric-card.orange .metric-icon { color: var(--orange); opacity: 0.7; }
+.metric-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+.metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* ── Section heading ────────────────────────────────────────────────── */
+.section-heading {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+/* ── Tool Cards (3-col grid) ────────────────────────────────────────── */
+.tool-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.tool-card {
+  display: block;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+.tool-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  text-decoration: none;
+}
+.tool-card.claude { border-left: 3px solid var(--purple); }
+.tool-card.claude:hover { border-color: var(--purple); }
+.tool-card.copilot { border-left: 3px solid var(--orange); }
+.tool-card.copilot:hover { border-color: var(--orange); }
+.tool-card.vscode { border-left: 3px solid var(--green); }
+.tool-card.vscode:hover { border-color: var(--green); }
+
+.tool-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.tool-card-icon {
+  width: 36px; height: 36px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.tool-card.claude .tool-card-icon { background: var(--purple-subtle); color: var(--purple); }
+.tool-card.copilot .tool-card-icon { background: var(--orange-subtle); color: var(--orange); }
+.tool-card.vscode .tool-card-icon { background: var(--green-subtle); color: var(--green); }
+
+.tool-card-header h3 { font-size: 16px; font-weight: 600; flex: 1; }
+.tool-card.claude h3 { color: var(--purple); }
+.tool-card.copilot h3 { color: var(--orange); }
+.tool-card.vscode h3 { color: var(--green); }
+
+.tool-card .status-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.status-installed { background: var(--green-subtle); color: var(--green); }
+.status-not-found { background: var(--bg-tertiary); color: var(--text-secondary); }
+
+.tool-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.tool-stat {
+  text-align: center;
+  padding: 10px 4px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+.tool-stat-value { font-size: 20px; font-weight: 700; color: var(--text); }
+.tool-stat-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ── Session Breakdown ──────────────────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }
+@media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
+
+.breakdown-bars {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.breakdown-bars .section-heading { margin-bottom: 16px; }
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.bar-row + .bar-row { border-top: 1px solid var(--border); }
+.bar-row a { text-decoration: none; }
+.bar-source {
+  width: 80px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.bar-track {
+  flex: 1;
+  height: 24px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 2px;
+}
+.bar-fill.claude { background: var(--purple); }
+.bar-fill.copilot { background: var(--orange); }
+.bar-fill.vscode { background: var(--green); }
+.bar-count {
+  width: 40px;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* ── Recent Sessions ────────────────────────────────────────────────── */
+.recent-sessions {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.recent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.recent-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+.view-all-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity var(--transition);
+}
+.view-all-link:hover { text-decoration: none; opacity: 0.8; }
+.recent-list { list-style: none; }
+.recent-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--transition);
+}
+.recent-item:last-child { border-bottom: none; }
+.recent-item:hover { background: var(--bg-tertiary); text-decoration: none; }
+.recent-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+}
+.recent-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+/* ── Empty state ────────────────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-secondary);
+}
+.empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
+.empty-state svg { margin-bottom: 16px; opacity: 0.4; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="dashboard-header">
+    <h1>AI Control Plane</h1>
+    <p>Your AI coding tools at a glance</p>
+  </div>
+
+  {# ── Hero Metrics (clickable) ──────────────────────────────────────── #}
+  <div class="metrics-grid">
+    <a class="metric-card blue" href="/tools">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></div>
+      <div class="metric-value">{{ total_mcp_servers }}</div>
+      <div class="metric-label">MCP Servers</div>
+    </a>
+    <a class="metric-card purple" href="/tools/claude">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+      <div class="metric-value">{{ total_plugins }}</div>
+      <div class="metric-label">Plugins</div>
+    </a>
+    <a class="metric-card green" href="/agents">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+      <div class="metric-value">{{ total_agents }}</div>
+      <div class="metric-label">Agents</div>
+    </a>
+    <a class="metric-card" href="/sessions">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+      <div class="metric-value">{{ total_sessions }}</div>
+      <div class="metric-label">Sessions</div>
+    </a>
+    <a class="metric-card orange" href="/tools/claude">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+      <div class="metric-value">{{ total_hooks }}</div>
+      <div class="metric-label">Hooks</div>
+    </a>
+    <a class="metric-card" href="/tools/claude">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></svg></div>
+      <div class="metric-value">{{ total_commands }}</div>
+      <div class="metric-label">Commands</div>
+    </a>
+    <a class="metric-card" href="/tools/claude">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg></div>
+      <div class="metric-value">{{ total_feature_flags }}</div>
+      <div class="metric-label">Feature Flags</div>
+    </a>
+    <a class="metric-card blue" href="/skills">
+      <div class="metric-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+      <div class="metric-value">{{ total_skills }}</div>
+      <div class="metric-label">Skills</div>
+    </a>
+  </div>
+
+  {# ── Tool Cards ────────────────────────────────────────────────────── #}
+  <div class="section-heading">Tools</div>
+  <div class="tool-cards">
+    {% set c = configs.claude %}
+    <a class="tool-card claude" href="/tools/claude">
+      <div class="tool-card-header">
+        <div class="tool-card-icon">{{ icon_claude(20) }}</div>
+        <h3>Claude Code</h3>
+        <span class="status-badge {% if c.installed %}status-installed{% else %}status-not-found{% endif %}">
+          {{ "Installed" if c.installed else "Not found" }}
+        </span>
+      </div>
+      <div class="tool-stats">
+        <div class="tool-stat"><div class="tool-stat-value">{{ c.mcp_servers|length }}</div><div class="tool-stat-label">MCP</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ c.plugins|length + c.external_plugins|length }}</div><div class="tool-stat-label">Plugins</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ c.agents|length }}</div><div class="tool-stat-label">Agents</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ c.skills|length }}</div><div class="tool-stat-label">Skills</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ c.commands|length }}</div><div class="tool-stat-label">Commands</div></div>
+      </div>
+    </a>
+
+    {% set cp = configs.copilot %}
+    <a class="tool-card copilot" href="/tools/copilot">
+      <div class="tool-card-header">
+        <div class="tool-card-icon">{{ icon_copilot(20) }}</div>
+        <h3>GitHub Copilot</h3>
+        <span class="status-badge {% if cp.installed %}status-installed{% else %}status-not-found{% endif %}">
+          {{ "Installed" if cp.installed else "Not found" }}
+        </span>
+      </div>
+      <div class="tool-stats">
+        <div class="tool-stat"><div class="tool-stat-value">{{ cp.mcp_servers|length }}</div><div class="tool-stat-label">MCP</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ cp.skills|length }}</div><div class="tool-stat-label">Skills</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ cp.session_count }}</div><div class="tool-stat-label">Sessions</div></div>
+      </div>
+    </a>
+
+    {% set v = configs.vscode %}
+    <a class="tool-card vscode" href="/tools/vscode">
+      <div class="tool-card-header">
+        <div class="tool-card-icon">{{ icon_vscode(20) }}</div>
+        <h3>VS Code Chat</h3>
+        <span class="status-badge {% if v.installed %}status-installed{% else %}status-not-found{% endif %}">
+          {{ "Installed" if v.installed else "Not found" }}
+        </span>
+      </div>
+      <div class="tool-stats">
+        <div class="tool-stat"><div class="tool-stat-value">{{ v.mcp_servers|length }}</div><div class="tool-stat-label">MCP</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ v.agents|length }}</div><div class="tool-stat-label">Agents</div></div>
+        <div class="tool-stat"><div class="tool-stat-value">{{ v.skills|length }}</div><div class="tool-stat-label">Skills</div></div>
+      </div>
+    </a>
+  </div>
+
+  {# ── Session Breakdown + Recent Sessions (side by side) ─────────── #}
+  {% if total_sessions > 0 %}
+  <div class="two-col">
+    <div class="breakdown-bars">
+      <div class="section-heading">Sessions by Source</div>
+      {% set max_count = [claude_count, copilot_count, vscode_count]|max or 1 %}
+      <div class="bar-row">
+        <span class="bar-source">Claude</span>
+        <div class="bar-track"><div class="bar-fill claude" style="width: {{ (claude_count / max_count * 100)|round|int }}%"></div></div>
+        <span class="bar-count">{{ claude_count }}</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-source">Copilot</span>
+        <div class="bar-track"><div class="bar-fill copilot" style="width: {{ (copilot_count / max_count * 100)|round|int }}%"></div></div>
+        <span class="bar-count">{{ copilot_count }}</span>
+      </div>
+      <div class="bar-row">
+        <span class="bar-source">VS Code</span>
+        <div class="bar-track"><div class="bar-fill vscode" style="width: {{ (vscode_count / max_count * 100)|round|int }}%"></div></div>
+        <span class="bar-count">{{ vscode_count }}</span>
+      </div>
+    </div>
+
+    <div class="recent-sessions">
+      <div class="recent-header">
+        <h3>Recent Sessions</h3>
+        <a class="view-all-link" href="/sessions">View all <span>&rarr;</span></a>
+      </div>
+      <div class="recent-list">
+        {% for s in sessions[:5] %}
+        <a class="recent-item" href="/session/{{ s.id }}">
+          {% if s.source == 'claude' %}
+          <span class="badge badge-source-claude">Claude</span>
+          {% elif s.source == 'vscode' %}
+          <span class="badge badge-source-vscode">VS Code</span>
+          {% else %}
+          <span class="badge badge-source-copilot">Copilot</span>
+          {% endif %}
+          <span class="recent-summary">{{ s.summary or s.id }}</span>
+          {% if s.created_at %}
+          <span class="recent-time">{{ s.created_at[:16].replace('T', ' ') }}</span>
+          {% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+    </svg>
+    <h2>No sessions found</h2>
+    <p>Point the viewer at directories containing Copilot, Claude Code, or VS Code Chat session logs.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
