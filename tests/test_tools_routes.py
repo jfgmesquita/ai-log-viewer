@@ -5,12 +5,13 @@ from __future__ import annotations
 from ai_ctrl_plane.app import create_app
 
 
-def _client(tmp_path):
+def _client(tmp_path, desktop_dir=None):
     app = create_app(
         log_dir=str(tmp_path / "copilot"),
         claude_dir=str(tmp_path / "claude"),
         vscode_dir=str(tmp_path / "vscode"),
         cache_dir=str(tmp_path / "cache"),
+        desktop_dir=str(desktop_dir) if desktop_dir else str(tmp_path / "Claude"),
     )
     app.config["TESTING"] = True
     return app.test_client()
@@ -58,6 +59,7 @@ def test_api_tools_json(tmp_path):
     assert "claude" in data
     assert "copilot" in data
     assert "vscode" in data
+    assert "claude_desktop" in data
 
 
 def test_api_tool_claude_json(tmp_path):
@@ -88,6 +90,11 @@ def test_dashboard_has_tool_configs(tmp_path):
     assert resp.status_code == 200
     assert b"AI Control Plane" in resp.data
     assert b"MCP Servers" in resp.data
+    # All four tool cards must be present
+    assert b"Claude Code" in resp.data
+    assert b"GitHub Copilot" in resp.data
+    assert b"VS Code Chat" in resp.data
+    assert b"Claude Desktop" in resp.data
 
 
 def test_agents_route_200(tmp_path):
@@ -380,6 +387,36 @@ def test_rebuild_cache_post(tmp_path):
     assert "/settings" in resp.headers["Location"]
 
 
+def test_dashboard_claude_desktop_card_renders_without_install(tmp_path):
+    """Claude Desktop card must render even when desktop is not installed (missing dir)."""
+    # Pass a non-existent desktop_dir to simulate a device without Claude Desktop
+    client = _client(tmp_path, desktop_dir=tmp_path / "no_such_desktop")
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert b"Claude Desktop" in resp.data
+    assert b"Not found" in resp.data
+
+
+def test_rebuild_cache_enqueues_desktop_path(tmp_path):
+    """Rebuild cache endpoint must pass desktop_path so claude_desktop is included in the rebuild."""
+    import json as _json
+
+    desktop_dir = tmp_path / "Claude"
+    desktop_dir.mkdir()
+    cfg = {"mcpServers": {"test-server": {"command": "npx", "args": []}}}
+    (desktop_dir / "claude_desktop_config.json").write_text(_json.dumps(cfg))
+
+    client = _client(tmp_path, desktop_dir=desktop_dir)
+    # Trigger a rebuild
+    resp = client.post("/settings/rebuild-cache")
+    assert resp.status_code == 302
+    # After rebuild, desktop config with MCP server must be accessible
+    api_resp = client.get("/api/tools/claude_desktop")
+    data = api_resp.get_json()
+    assert data["installed"] is True
+    assert any(s["name"] == "test-server" for s in data["mcp_servers"])
+
+
 # ---------------------------------------------------------------------------
 # Cache status API
 # ---------------------------------------------------------------------------
@@ -423,3 +460,44 @@ def test_cache_loading_stripe_in_base(tmp_path):
     assert resp.status_code == 200
     assert b"cache-loading" in resp.data
     assert b"cache-stripe" in resp.data
+
+
+def test_tool_detail_claude_desktop_200(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/tools/claude_desktop")
+    assert resp.status_code == 200
+    assert b"Claude Desktop" in resp.data
+
+
+def test_api_tool_claude_desktop_json(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/api/tools/claude_desktop")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "installed" in data
+    assert "mcp_servers" in data
+    assert "skills" in data
+    assert "cowork_plugins" in data
+
+
+def test_tools_overview_has_claude_desktop_card(tmp_path):
+    """Tools overview page should include a Claude Desktop card."""
+    client = _client(tmp_path)
+    resp = client.get("/tools")
+    assert resp.status_code == 200
+    assert b"Claude Desktop" in resp.data
+
+
+def test_tool_detail_claude_desktop_with_mcp_servers(tmp_path):
+    """Claude Desktop detail page should render MCP server data when present."""
+    import json
+
+    desktop_dir = tmp_path / "Claude"
+    desktop_dir.mkdir()
+    cfg = {"mcpServers": {"my-server": {"command": "npx", "args": ["-y", "my-mcp"]}}}
+    (desktop_dir / "claude_desktop_config.json").write_text(json.dumps(cfg))
+
+    client = _client(tmp_path, desktop_dir=desktop_dir)
+    resp = client.get("/tools/claude_desktop")
+    assert resp.status_code == 200
+    assert b"my-server" in resp.data
