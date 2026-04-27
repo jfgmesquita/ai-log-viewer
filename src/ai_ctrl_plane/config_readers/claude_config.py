@@ -445,6 +445,32 @@ def _extract_cwd_from_jsonl(project_dir: Path) -> str:
     return ""
 
 
+def _read_repo_permissions(real_path: str) -> dict:
+    """Read permission rules from repo-local Claude settings.
+
+    Merges ``<cwd>/.claude/settings.json`` (committed) and
+    ``<cwd>/.claude/settings.local.json`` (local, user-specific).
+    Returns a dict with ``allow``, ``deny``, and ``ask`` lists.
+    """
+    result: dict[str, list[str]] = {"allow": [], "deny": [], "ask": []}
+    repo = Path(real_path)
+    for name in ("settings.json", "settings.local.json"):
+        cfg = safe_read_json(repo / ".claude" / name) or {}
+        perms = cfg.get("permissions", {})
+        # ``permissions`` is supposed to be a dict but a corrupted
+        # settings file could put a list / scalar there; the inner
+        # ``perms.get(...)`` would crash.
+        if not isinstance(perms, dict):
+            continue
+        for key in ("allow", "deny", "ask"):
+            items = perms.get(key, [])
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, str) and item not in result[key]:
+                        result[key].append(item)
+    return result
+
+
 def read_claude_projects(claude_home: Path | None = None) -> dict:
     """Read Claude Code per-project data.
 
@@ -508,7 +534,14 @@ def read_claude_projects(claude_home: Path | None = None) -> dict:
                     if content:
                         memory_files.append({"filename": mf.name, "content": content})
 
-        last_cost = meta.get("lastCost") if isinstance(meta.get("lastCost"), int | float) else None
+        # ``bool`` is a subclass of ``int`` in Python; reject it so a
+        # malformed ``lastCost: true`` doesn't render as $1.00.
+        _raw_cost = meta.get("lastCost")
+        last_cost = _raw_cost if isinstance(_raw_cost, int | float) and not isinstance(_raw_cost, bool) else None
+
+        # Read repo-local permissions from <cwd>/.claude/settings.local.json
+        # and committed settings from <cwd>/.claude/settings.json
+        local_permissions = _read_repo_permissions(real_path) if real_path else {}
 
         project = {
             "encoded_name": encoded_name,
@@ -529,7 +562,8 @@ def read_claude_projects(claude_home: Path | None = None) -> dict:
             "allowed_tools": meta.get("allowedTools", []),
             "mcp_servers": meta.get("mcpServers", {}),
             "example_files": meta.get("exampleFiles", []),
-            "metadata": meta,
+            "permissions": local_permissions,
+            "metadata": {**meta, "permissions": local_permissions},
         }
         projects.append(project)
         if last_cost is not None:
@@ -698,24 +732,39 @@ def _read_cowork_plugins(desktop_dir: Path) -> list[dict]:
             installed = safe_read_json(installed_path) or {}
             settings = safe_read_json(inner / "cowork_plugins" / "cowork_settings.json") or {}
             enabled_plugins = settings.get("enabledPlugins", {})
+            if not isinstance(enabled_plugins, dict):
+                enabled_plugins = {}
 
             plugins: list[dict] = []
-            for plugin_key, installs in installed.get("plugins", {}).items():
+            installed_plugins = installed.get("plugins", {})
+            if not isinstance(installed_plugins, dict):
+                installed_plugins = {}
+            for plugin_key, installs in installed_plugins.items():
                 if not isinstance(installs, list):
                     continue
                 for inst in installs:
-                    cache_path = Path(inst.get("installPath", ""))
+                    if not isinstance(inst, dict):
+                        continue
+                    # ``installPath`` is meant to be a string but a hand-edited
+                    # or partially-written ``installed_plugins.json`` can put
+                    # ``None`` / a number there, which crashes ``Path()``.
+                    install_path = inst.get("installPath", "")
+                    if not isinstance(install_path, str) or not install_path:
+                        continue
+                    cache_path = Path(install_path)
                     if not cache_path.is_dir():
                         continue
                     plugin_json = safe_read_json(cache_path / ".claude-plugin" / "plugin.json") or {}
                     plugin_skills = read_skills(cache_path / "skills")
+                    author_obj = plugin_json.get("author") or {}
+                    author_name = author_obj.get("name", "") if isinstance(author_obj, dict) else ""
                     plugins.append(
                         {
                             "key": plugin_key,
                             "name": plugin_json.get("name", plugin_key),
                             "version": inst.get("version", ""),
                             "description": plugin_json.get("description", ""),
-                            "author": (plugin_json.get("author") or {}).get("name", ""),
+                            "author": author_name,
                             "enabled": bool(enabled_plugins.get(plugin_key, False)),
                             "installed_at": inst.get("installedAt", ""),
                             "last_updated": inst.get("lastUpdated", ""),

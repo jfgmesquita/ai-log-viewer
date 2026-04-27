@@ -16,11 +16,36 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from .config_readers._common import safe_read_json
 from .parser import MAX_RESULT_CHARS
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _dget(obj: object, *keys: str, default: object = None) -> object:
+    """Walk a chain of dict keys, returning *default* on any non-dict step.
+
+    VS Code Chat session JSON is shaped by another tool's writes, so any
+    intermediate node may be missing or, if the file is corrupted, the
+    wrong type.  This helper mirrors ``a.get(k1, {}).get(k2, ...)`` chains
+    without crashing when an intermediate is a string / list / None.
+    """
+    for k in keys:
+        if not isinstance(obj, dict):
+            return default
+        obj = obj.get(k)
+    return default if obj is None else obj
+
+
+def _dget_dict(obj: object, *keys: str) -> dict:
+    """Like :func:`_dget`, but coerces the leaf to ``{}`` if it isn't a dict.
+
+    Use when the caller is about to ``.get(...)`` further off the result.
+    """
+    v = _dget(obj, *keys, default={})
+    return v if isinstance(v, dict) else {}
 
 
 def _ms_to_iso(ms: int | float) -> str:
@@ -36,12 +61,13 @@ def _ms_to_iso(ms: int | float) -> str:
 def _extract_model(request: dict) -> str:
     """Extract a human-readable model name from a VS Code Chat request."""
     model_id = request.get("modelId", "")
-    if model_id:
+    if isinstance(model_id, str) and model_id:
         # Strip provider prefix: "copilot/claude-sonnet-4" -> "claude-sonnet-4"
         return model_id.split("/", 1)[-1] if "/" in model_id else model_id
 
-    details = request.get("result", {}).get("details", "")
-    if details:
+    result = request.get("result")
+    details = result.get("details", "") if isinstance(result, dict) else ""
+    if isinstance(details, str) and details:
         # "Claude Sonnet 4 . 1x" -> take first part
         return details.split("\u2022")[0].strip().split(" . ")[0].strip()
     return ""
@@ -49,8 +75,9 @@ def _extract_model(request: dict) -> str:
 
 def _extract_cost_multiplier(request: dict) -> str:
     """Extract cost multiplier from result.details (e.g. 'Claude Haiku 4.5 . 0.33x')."""
-    details = request.get("result", {}).get("details", "")
-    if not details:
+    result = request.get("result")
+    details = result.get("details", "") if isinstance(result, dict) else ""
+    if not isinstance(details, str) or not details:
         return ""
     # Look for pattern like "0.33x" or "1x"
     parts = details.split("\u2022")
@@ -71,7 +98,7 @@ _AGENT_MODE_MAP = {
 
 def _agent_mode_label(agent_id: str) -> str:
     """Map a VS Code agent ID to a human-readable mode label."""
-    if not agent_id:
+    if not isinstance(agent_id, str) or not agent_id:
         return ""
     suffix = agent_id.rsplit(".", 1)[-1].lower()
     return _AGENT_MODE_MAP.get(suffix, suffix.title() if suffix else "")
@@ -203,18 +230,16 @@ def discover_sessions(base: Path) -> list[dict]:
             # Read workspace.json for cwd
             cwd = ""
             repo = ""
-            ws_json = ws_dir / "workspace.json"
-            if ws_json.is_file():
-                try:
-                    with open(ws_json, encoding="utf-8") as f:
-                        ws_data = json.load(f)
-                    folder = ws_data.get("folder", "")
-                    if folder:
-                        cwd = _folder_uri_to_path(folder)
-                        # Derive repo from last path segment
-                        repo = Path(cwd).name if cwd else ""
-                except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-                    pass
+            # ``safe_read_json`` returns ``None`` for non-dict roots
+            # (a workspace.json with a list / scalar at the root from a
+            # corrupted file would otherwise crash ``ws_data.get``).
+            ws_data = safe_read_json(ws_dir / "workspace.json")
+            if ws_data:
+                folder = ws_data.get("folder", "")
+                if isinstance(folder, str) and folder:
+                    cwd = _folder_uri_to_path(folder)
+                    # Derive repo from last path segment
+                    repo = Path(cwd).name if cwd else ""
 
             for session_file in sorted(list(chat_dir.glob("*.json")) + list(chat_dir.glob("*.jsonl"))):
                 entry = _session_entry_from_file(session_file, cwd, repo)
@@ -252,27 +277,39 @@ def discover_all_vscode_sessions(vscode_path: Path) -> list[dict]:
 def _session_entry_from_file(path: Path, cwd: str, repo: str) -> dict | None:
     """Build a session index entry from a chat session file."""
     data = _read_session_json(path)
-    if not data:
+    # JSON root can legally be a list / scalar / null; we only handle
+    # dict-shaped session files.
+    if not isinstance(data, dict):
         return None
 
     session_id = data.get("sessionId", "")
-    if not session_id:
+    if not isinstance(session_id, str) or not session_id:
         return None
 
     requests = data.get("requests", [])
-    if not requests:
+    if not isinstance(requests, list) or not requests:
         return None
 
-    # Summary: prefer customTitle, then first user message
+    # Summary: prefer customTitle, then first user message.  Each ``.get``
+    # on the way is defended because a malformed transcript or stub
+    # session can put non-dict / non-string values at any layer.
     summary = data.get("customTitle", "")
+    if not isinstance(summary, str):
+        summary = ""
     if not summary and requests:
-        summary = (requests[0].get("message", {}).get("text", "") or "")[:120]
+        first = requests[0] if isinstance(requests[0], dict) else {}
+        msg = first.get("message")
+        text = msg.get("text", "") if isinstance(msg, dict) else ""
+        if isinstance(text, str):
+            summary = text[:120]
     if not summary:
         summary = session_id
 
     # Model from first request
     model = ""
     for req in requests:
+        if not isinstance(req, dict):
+            continue
         model = _extract_model(req)
         if model:
             break
@@ -280,14 +317,45 @@ def _session_entry_from_file(path: Path, cwd: str, repo: str) -> dict | None:
     created_at = _ms_to_iso(data.get("creationDate", 0))
     updated_at = _ms_to_iso(data.get("lastMessageDate", 0)) or created_at
 
-    # Check if any request hit the tool call limit
-    max_tool_calls_exceeded = any(
-        req.get("result", {}).get("metadata", {}).get("maxToolCallsExceeded", False) for req in requests
-    )
+    # Check if any request hit the tool call limit. Each layer is
+    # type-checked so a non-dict ``result`` / ``metadata`` doesn't crash
+    # the discover pass.
+    def _hit_tool_limit(req: object) -> bool:
+        if not isinstance(req, dict):
+            return False
+        result = req.get("result")
+        if not isinstance(result, dict):
+            return False
+        metadata = result.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+        return bool(metadata.get("maxToolCallsExceeded", False))
+
+    max_tool_calls_exceeded = any(_hit_tool_limit(r) for r in requests)
+
+    # Take the max mtime across the session file and the sibling
+    # ``workspace.json`` — the entry's cached ``cwd`` / ``repository``
+    # come from workspace.json, so editing it alone (without touching
+    # the session file) needs to invalidate the row. Same pattern as
+    # the Copilot parser's ``events.jsonl`` + ``workspace.yaml`` fix.
+    mtimes: list[float] = []
+    try:
+        mtimes.append(path.stat().st_mtime)
+    except OSError:
+        pass
+    workspace_json = path.parent.parent / "workspace.json"
+    if workspace_json.is_file():
+        try:
+            mtimes.append(workspace_json.stat().st_mtime)
+        except OSError:
+            pass
+    source_mtime = max(mtimes) if mtimes else 0.0
 
     entry: dict = {
         "id": session_id,
         "path": str(path),
+        "source_path": str(path),
+        "source_mtime": source_mtime,
         "summary": summary,
         "repository": repo,
         "branch": "",
@@ -309,6 +377,57 @@ def _session_entry_from_file(path: Path, cwd: str, repo: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+_FTS_CONTENT_LIMIT = 500_000
+
+
+def extract_searchable_text(path: Path) -> str:
+    """Concatenate user prompts + model responses from a VS Code Chat
+    session for FTS.
+
+    Reads the request/response array; each request carries a user
+    ``message.text`` and a ``response`` list of ``{value, kind}`` chunks.
+    """
+    data = _read_session_json(path)
+    # ``_read_session_json`` returns ``json.load`` for ``.json`` files,
+    # which is legally any JSON value at the root (list, string, number,
+    # null, …). We only support dict-shaped sessions; bail otherwise so
+    # ``data.get()`` can't crash on a non-dict.
+    if not isinstance(data, dict):
+        return ""
+    # ``requests`` is supposed to be a list of request dicts but a
+    # malformed session file could put a dict / string / scalar there.
+    # ``... or []`` previously hid the type bug — iterating a dict would
+    # silently walk its *keys*, dropping every searchable string. Coerce
+    # the same way :func:`parse_events` does so FTS extraction stays
+    # consistent across both code paths.
+    raw_requests = data.get("requests")
+    requests = raw_requests if isinstance(raw_requests, list) else []
+    parts: list[str] = []
+    total = 0
+    for req in requests:
+        if total >= _FTS_CONTENT_LIMIT:
+            break
+        if not isinstance(req, dict):
+            continue
+        msg = req.get("message") or {}
+        if isinstance(msg, dict):
+            text = msg.get("text", "") or msg.get("parsedText", "") or ""
+            if isinstance(text, str) and text:
+                parts.append(text)
+                total += len(text)
+        response = req.get("response")
+        if not isinstance(response, list):
+            continue
+        for r in response:
+            if not isinstance(r, dict):
+                continue
+            text = r.get("value", "") or r.get("text", "") or ""
+            if isinstance(text, str) and text:
+                parts.append(text)
+                total += len(text)
+    return "\n".join(parts)[:_FTS_CONTENT_LIMIT]
+
+
 def parse_events(path: Path) -> list[dict]:
     """Read a VS Code Chat session file and return a metadata dict + requests.
 
@@ -316,7 +435,9 @@ def parse_events(path: Path) -> list[dict]:
     request objects from the session JSON.
     """
     data = _read_session_json(path)
-    if not data:
+    # JSON root can legally be a list / scalar / null; we only handle
+    # dict-shaped session files.
+    if not isinstance(data, dict):
         return []
 
     meta = {
@@ -328,19 +449,22 @@ def parse_events(path: Path) -> list[dict]:
         "customTitle": data.get("customTitle", ""),
     }
 
-    # Attach cwd from workspace.json if available
-    ws_json = path.parent.parent / "workspace.json"
-    if ws_json.is_file():
-        try:
-            with open(ws_json, encoding="utf-8") as f:
-                ws_data = json.load(f)
-            folder = ws_data.get("folder", "")
-            if folder:
-                meta["cwd"] = _folder_uri_to_path(folder)
-        except (json.JSONDecodeError, OSError):
-            pass
+    # Attach cwd from workspace.json if available — ``safe_read_json``
+    # handles missing / malformed / non-dict-root cases.
+    ws_data = safe_read_json(path.parent.parent / "workspace.json")
+    if ws_data:
+        folder = ws_data.get("folder", "")
+        if isinstance(folder, str) and folder:
+            meta["cwd"] = _folder_uri_to_path(folder)
 
-    return [meta] + data.get("requests", [])
+    # ``requests`` is supposed to be a list of request dicts but a
+    # malformed session file could put any JSON value there; coerce to
+    # ``[]`` so the ``+`` concatenation can't TypeError, and filter to
+    # dict entries so downstream consumers don't have to.
+    requests = data.get("requests")
+    if not isinstance(requests, list):
+        requests = []
+    return [meta] + [r for r in requests if isinstance(r, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -352,24 +476,31 @@ def extract_workspace(events: list[dict]) -> dict:
     """Synthesize a workspace-like dict from VS Code Chat events."""
     ws: dict = {}
 
-    meta = events[0] if events and events[0].get("_vscode_meta") else {}
-    ws["id"] = meta.get("sessionId", "")
-    ws["cwd"] = meta.get("cwd", "")
+    meta = events[0] if events and isinstance(events[0], dict) and events[0].get("_vscode_meta") else {}
+    ws["id"] = meta.get("sessionId", "") if isinstance(meta, dict) else ""
+    ws["cwd"] = meta.get("cwd", "") if isinstance(meta, dict) else ""
     ws["branch"] = ""
-    ws["created_at"] = _ms_to_iso(meta.get("creationDate", 0))
-    ws["updated_at"] = _ms_to_iso(meta.get("lastMessageDate", 0)) or ws["created_at"]
+    ws["created_at"] = _ms_to_iso(meta.get("creationDate", 0)) if isinstance(meta, dict) else ""
+    ws["updated_at"] = (
+        _ms_to_iso(meta.get("lastMessageDate", 0)) if isinstance(meta, dict) else ""
+    ) or ws["created_at"]
 
     # Model and summary from requests
-    requests = [e for e in events if not e.get("_vscode_meta")]
+    requests = [e for e in events if isinstance(e, dict) and not e.get("_vscode_meta")]
     for req in requests:
         model = _extract_model(req)
         if model:
             ws["model"] = model
             break
 
-    summary = meta.get("customTitle", "")
+    summary = meta.get("customTitle", "") if isinstance(meta, dict) else ""
+    if not isinstance(summary, str):
+        summary = ""
     if not summary and requests:
-        summary = (requests[0].get("message", {}).get("text", "") or "")[:120]
+        msg = requests[0].get("message")
+        text = msg.get("text", "") if isinstance(msg, dict) else ""
+        if isinstance(text, str):
+            summary = text[:120]
     ws["summary"] = summary or ws["id"]
 
     return ws
@@ -408,7 +539,7 @@ def build_conversation(events: list[dict]) -> list[dict]:
     )
 
     # Check for maxToolCallsExceeded across all requests
-    if any(req.get("result", {}).get("metadata", {}).get("maxToolCallsExceeded", False) for req in requests):
+    if any(_dget(req, "result", "metadata", "maxToolCallsExceeded", default=False) for req in requests):
         conversation.append(
             {
                 "kind": "warning",
@@ -420,7 +551,7 @@ def build_conversation(events: list[dict]) -> list[dict]:
     # Extract auto-generated summary from last request (display near session start)
     last_req = requests[-1] if requests else {}
     first_req = requests[0] if requests else {}
-    auto_summary = last_req.get("result", {}).get("metadata", {}).get("summary", {}).get("text", "")
+    auto_summary = _dget(last_req, "result", "metadata", "summary", "text", default="")
     if auto_summary:
         conversation.append(
             {
@@ -432,22 +563,29 @@ def build_conversation(events: list[dict]) -> list[dict]:
 
     for req in requests:
         ts = _ms_to_iso(req.get("timestamp", 0))
-        timings = req.get("result", {}).get("timings", {})
+        timings = _dget_dict(req, "result", "timings")
         cost_multiplier = _extract_cost_multiplier(req)
 
         # Agent mode from request.agent.id (e.g. "github.copilot.editsAgent" -> "Edit")
-        agent_id = req.get("agent", {}).get("id", "") if isinstance(req.get("agent"), dict) else ""
-        agent_mode = _agent_mode_label(agent_id)
+        agent_id = _dget(req, "agent", "id", default="")
+        agent_mode = _agent_mode_label(agent_id) if isinstance(agent_id, str) else ""
 
         # --- User message ---
-        user_text = req.get("message", {}).get("text", "")
+        user_text = _dget(req, "message", "text", default="")
+        if not isinstance(user_text, str):
+            user_text = ""
         attachments: list[dict] = []
         # Extract file references from variableData
-        for var in req.get("variableData", {}).get("variables", []):
+        variables = _dget(req, "variableData", "variables", default=[])
+        if not isinstance(variables, list):
+            variables = []
+        for var in variables:
+            if not isinstance(var, dict):
+                continue
             if var.get("kind") == "file":
-                uri_data = var.get("value", {}).get("uri", {})
+                uri_data = _dget_dict(var, "value", "uri")
                 file_path = uri_data.get("path", "") or uri_data.get("fsPath", "")
-                if file_path:
+                if file_path and isinstance(file_path, str):
                     attachments.append({"type": "file", "name": Path(file_path).name, "path": file_path})
 
         if user_text:
@@ -463,9 +601,13 @@ def build_conversation(events: list[dict]) -> list[dict]:
             )
 
         # --- Process tool call rounds from metadata (structured data) ---
-        result_meta = req.get("result", {}).get("metadata", {})
+        result_meta = _dget_dict(req, "result", "metadata")
         tool_call_rounds = result_meta.get("toolCallRounds", [])
+        if not isinstance(tool_call_rounds, list):
+            tool_call_rounds = []
         tool_call_results = result_meta.get("toolCallResults", {})
+        if not isinstance(tool_call_results, dict):
+            tool_call_results = {}
 
         # Build ordered list of pastTenseMessage from response array.
         # IDs differ between response[] and toolCallRounds, so match by
@@ -481,9 +623,13 @@ def build_conversation(events: list[dict]) -> list[dict]:
         if tool_call_rounds:
             _pt_idx = 0  # positional index into past_tense_list
             for round_data in tool_call_rounds:
+                if not isinstance(round_data, dict):
+                    continue
                 response_text = round_data.get("response", "")
                 tool_calls = round_data.get("toolCalls", [])
-                thinking = round_data.get("thinking", {}).get("text", "")
+                if not isinstance(tool_calls, list):
+                    tool_calls = []
+                thinking = _dget(round_data, "thinking", "text", default="")
 
                 # Emit assistant message for this round
                 if response_text or tool_calls:
@@ -700,8 +846,10 @@ def compute_stats(events: list[dict]) -> dict:
     }
 
     for req in requests:
+        if not isinstance(req, dict):
+            continue
         # Each request is a user-assistant turn
-        msg_text = req.get("message", {}).get("text", "")
+        msg_text = _dget(req, "message", "text", default="")
         if msg_text:
             stats["user_messages"] += 1
             stats["turns"] += 1
@@ -712,25 +860,37 @@ def compute_stats(events: list[dict]) -> dict:
             stats["assistant_messages"] += 1
 
         # Count tool calls from toolCallRounds
-        result_meta = req.get("result", {}).get("metadata", {})
-        for round_data in result_meta.get("toolCallRounds", []):
-            for tc in round_data.get("toolCalls", []):
+        result_meta = _dget_dict(req, "result", "metadata")
+        rounds = result_meta.get("toolCallRounds", [])
+        if not isinstance(rounds, list):
+            rounds = []
+        for round_data in rounds:
+            if not isinstance(round_data, dict):
+                continue
+            tcs = round_data.get("toolCalls", [])
+            if not isinstance(tcs, list):
+                continue
+            for tc in tcs:
+                if not isinstance(tc, dict):
+                    continue
                 name = tc.get("name", "unknown")
                 stats["tool_calls"][name] = stats["tool_calls"].get(name, 0) + 1
 
         # Fallback: count from response[] if no rounds
-        if not result_meta.get("toolCallRounds"):
-            for item in req.get("response", []):
-                if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
-                    name = item.get("toolId", "unknown")
-                    stats["tool_calls"][name] = stats["tool_calls"].get(name, 0) + 1
+        if not rounds:
+            response_items = req.get("response", [])
+            if isinstance(response_items, list):
+                for item in response_items:
+                    if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
+                        name = item.get("toolId", "unknown")
+                        stats["tool_calls"][name] = stats["tool_calls"].get(name, 0) + 1
 
         if req.get("isCanceled"):
             stats["errors"] += 1
 
         # Prompt token details — treat missing keys as 0 so averages
         # aren't biased by requests where a category happens to be zero.
-        ptd = result_meta.get("usage", {}).get("promptTokenDetails", {})
+        ptd = _dget_dict(result_meta, "usage", "promptTokenDetails")
         if ptd:
             for key in ("system", "toolDefinitions", "messages", "files"):
                 pct = ptd.get(key, 0)
